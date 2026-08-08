@@ -137,6 +137,7 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [adding, setAdding] = useState(false);
   const [now] = useState(() => Date.now());
+  const brandLogo = theme === "pro" ? "/icon_lightbg.png" : "/icon_darkbg.png";
 
   useEffect(() => {
     try { localStorage.setItem("tsr_theme", theme); } catch {}
@@ -218,7 +219,7 @@ export default function App() {
       <div className={"app theme-" + theme}>
         <aside className="sidebar">
           <div className="brand">
-            <div className="brandmark">TSR</div>
+            <img className="brandlogo" src={brandLogo} alt="The Sponsored Route logo" />
             <div className="brandtext">
               <b>The Sponsored Route</b>
               <span>Member OS</span>
@@ -735,7 +736,7 @@ const CSS = `
 }
 .app{display:flex;min-height:100vh;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
 .app.theme-pro .sidebar{width:240px;padding:20px 16px;background:linear-gradient(180deg,#0f172a 0%,#111827 100%);border-right:1px solid rgba(148,163,184,.18)}
-.app.theme-pro .brandmark{background:linear-gradient(135deg,#2563eb,#0f766e);box-shadow:0 14px 28px rgba(37,99,235,.28)}
+.app.theme-pro .brandlogo{background:transparent;box-shadow:none;border:1px solid rgba(148,163,184,.18)}
 .app.theme-pro .brandtext b,.app.theme-pro .brandtext span,.app.theme-pro .navitem,.app.theme-pro .reset{color:#e2e8f0}
 .app.theme-pro .brandtext b{font-size:14px}
 .app.theme-pro .brandtext span,.app.theme-pro .navcount,.app.theme-pro .reset{color:rgba(226,232,240,.72)}
@@ -794,8 +795,7 @@ const CSS = `
 .sidebar{width:232px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--line);
   display:flex;flex-direction:column;padding:18px 14px;position:sticky;top:0;height:100vh}
 .brand{display:flex;align-items:center;gap:11px;padding:6px 8px 20px}
-.brandmark{width:34px;height:34px;border-radius:9px;background:var(--ink);color:#fff;
-  display:grid;place-items:center;font-weight:700;font-size:12px;letter-spacing:.5px}
+.brandlogo{width:34px;height:34px;border-radius:9px;object-fit:cover;display:block;flex:none}
 .brandtext{display:flex;flex-direction:column;line-height:1.25}
 .brandtext b{font-size:13.5px;font-weight:650}
 .brandtext span{font-size:11.5px;color:var(--ink3)}
