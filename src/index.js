@@ -49,16 +49,37 @@ const STALE_MEMBER = 10; // member unresponsive this many days -> chase
 const INACTIVE = 14;     // no activity this many days -> at risk
 
 const DAY = 86400000;
+const REPORT_DEADLINE = 48 * 60 * 60 * 1000;
 const days = (ms) => Math.max(0, Math.floor(ms / DAY));
 const fmtDate = (ms) =>
   new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const ago = (n) => (n === 0 ? "today" : n === 1 ? "1 day" : `${n} days`);
+const dateInputValue = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const dateInputToMs = (value) => {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day).getTime();
+};
+const timeLeft = (ms) => {
+  const abs = Math.abs(ms);
+  const hours = Math.floor(abs / (60 * 60 * 1000));
+  const minutes = Math.floor((abs % (60 * 60 * 1000)) / 60000);
+  const seconds = Math.floor((abs % 60000) / 1000);
+  const clock = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return ms >= 0 ? `${clock} left` : `${clock} overdue`;
+};
 
 function derive(m, now) {
   const a = ACTIONS[m.pos] || ACTIONS[0];
   const dInStage = days(now - m.stageSince);
   const dInactive = days(now - m.lastActivity);
   const placed = m.pos === 10;
+  const reportDeadline = m.pos === 1 || m.pos === 4;
+  const reportTimeLeft = reportDeadline ? REPORT_DEADLINE - (now - m.stageSince) : null;
+  const reportUrgency = !reportDeadline ? "" : reportTimeLeft <= 0 ? "late" : reportTimeLeft <= 12 * 60 * 60 * 1000 ? "soon" : "ontrack";
+  const reportProgress = reportDeadline ? Math.min(100, Math.max(0, ((REPORT_DEADLINE - reportTimeLeft) / REPORT_DEADLINE) * 100)) : 0;
   return {
     action: a,
     owner: a.owner,
@@ -66,6 +87,10 @@ function derive(m, now) {
     dInStage,
     dInactive,
     placed,
+    reportDeadline,
+    reportTimeLeft,
+    reportUrgency,
+    reportProgress,
     overdue:   a.ball === "us" && dInStage > STALE_US,
     staleWait: a.ball === "member" && dInStage > STALE_MEMBER && !placed,
     atRisk:    a.ball === "member" && dInactive >= INACTIVE && !placed,
@@ -93,14 +118,34 @@ const KEY = "tsr_members_v2";
 
 async function loadMembers() {
   try {
-    const data = localStorage.getItem(KEY);
-    return data ? JSON.parse(data) : null;
+    const { createClient } = await import("@supabase/supabase-js");
+    const supabase = createClient(
+      "https://cwbrpxohdxbjvprijscu.supabase.co",
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3YnJweG9oZHhianZwcmlqc2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2MTMwNDUsImV4cCI6MjEwMjE4OTA0NX0.VkujC5qVRHutsJwdjLVRM9IT5yIqNZopVNXQkxVgaA8",
+    );
+    const { data, error } = await supabase
+      .from("members")
+      .select("data")
+      .eq("id", KEY)
+      .maybeSingle();
+    if (error) throw error;
+    return data?.data ?? null;
   } catch {
     return null;
   }
 }
 async function persist(list) {
-  try { localStorage.setItem(KEY, JSON.stringify(list)); } catch {}
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const supabase = createClient(
+      "https://cwbrpxohdxbjvprijscu.supabase.co",
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3YnJweG9oZHhianZwcmlqc2N1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2MTMwNDUsImV4cCI6MjEwMjE4OTA0NX0.VkujC5qVRHutsJwdjLVRM9IT5yIqNZopVNXQkxVgaA8",
+    );
+    const { error } = await supabase
+      .from("members")
+      .upsert({ id: KEY, data: list });
+    if (error) throw error;
+  } catch {}
 }
 
 function seed(now) {
@@ -136,12 +181,17 @@ export default function App() {
   });
   const [selected, setSelected] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [now] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const brandLogo = theme === "pro" ? "/icon_lightbg.png" : "/icon_darkbg.png";
 
   useEffect(() => {
     try { localStorage.setItem("tsr_theme", theme); } catch {}
   }, [theme]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -446,7 +496,7 @@ function MembersView({ rows, onOpen }) {
   const list = rows
     .filter(active.test)
     .filter((r) => r.m.name.toLowerCase().includes(q.toLowerCase()) || r.m.industry.toLowerCase().includes(q.toLowerCase()))
-    .sort((a, b) => a.m.name.localeCompare(b.m.name));
+    .sort((a, b) => b.m.joinDate - a.m.joinDate);
 
   return (
     <div className="members">
@@ -476,6 +526,7 @@ function MembersView({ rows, onOpen }) {
               {r.d.isNew && <span className="tag new">New</span>}
               {r.d.atRisk && <span className="tag risk">At risk</span>}
               {r.d.overdue && <span className="tag od">Overdue</span>}
+              {r.d.reportDeadline && <span className={"tag deadline" + (r.d.reportTimeLeft < 0 ? " late" : "")}>{timeLeft(r.d.reportTimeLeft)}</span>}
               {r.d.placed && <span className="tag done">Placed</span>}
             </div>
             <div className="mcmeta">{r.m.industry} · {r.m.visa}</div>
@@ -521,7 +572,11 @@ function BoardView({ rows, onOpen }) {
                   <span className={"owner sm " + OWNER[r.d.owner].cls}>{OWNER[r.d.owner].label}</span>
                   {r.d.overdue && <span className="bflag od">{ago(r.d.dInStage)}</span>}
                   {r.d.atRisk && <span className="bflag risk">quiet</span>}
+                  {r.d.reportDeadline && <span className={"bdeadline " + r.d.reportUrgency}>
+                    <strong>{timeLeft(r.d.reportTimeLeft)}</strong>
+                  </span>}
                 </div>
+                {r.d.reportDeadline && <div className={"bdeadlinebar " + r.d.reportUrgency}><i style={{ width: r.d.reportProgress + "%" }} /></div>}
               </div>
             ))}
             {c.items.length === 0 && <div className="bempty">—</div>}
@@ -575,6 +630,7 @@ function BoardView({ rows, onOpen }) {
                 {ago(d.dInStage)} in stage
                 {d.overdue && " · overdue"}
               </span>
+              {d.reportDeadline && <span className={"deadline-note" + (d.reportTimeLeft < 0 ? " late" : "")}>48-hour report deadline · {timeLeft(d.reportTimeLeft)}</span>}
             </div>
             <button className={"cta " + OWNER[d.owner].cls} onClick={() => onAdvance(m.id)}>
               {d.action.done} <ArrowRight size={16} />
@@ -621,6 +677,7 @@ function BoardView({ rows, onOpen }) {
             <Field label="Visa" value={m.visa} edit={edit} onChange={(v) => onPatch(m.id, { visa: v })} half />
             <Field label="Phone" value={m.phone} edit={edit} onChange={(v) => onPatch(m.id, { phone: v })} half placeholder="—" />
           </div>
+          <DateField label="Joined date" value={m.joinDate} edit={edit} onChange={(v) => onPatch(m.id, { joinDate: v })} />
           <label className="lintoggle">
             <input type="checkbox" checked={!!m.linkedin} onChange={(e) => onPatch(m.id, { linkedin: e.target.checked })} />
             LinkedIn profile rebuilt
@@ -647,6 +704,17 @@ function Field({ label, value, edit, onChange, half, placeholder }) {
       {edit
         ? <input value={value} onChange={(e) => onChange(e.target.value)} />
         : <div className="fval">{value || placeholder || "—"}</div>}
+    </div>
+  );
+}
+
+function DateField({ label, value, edit, onChange }) {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      {edit
+        ? <input type="date" value={dateInputValue(value)} onChange={(e) => onChange(dateInputToMs(e.target.value))} />
+        : <div className="fval">{fmtDate(value)}</div>}
     </div>
   );
 }
@@ -921,6 +989,8 @@ const CSS = `
 .tag.new{background:var(--new-t);color:var(--new)}
 .tag.risk{background:var(--risk-t);color:var(--risk)}
 .tag.od{background:var(--member-t);color:var(--member)}
+.tag.deadline{background:var(--me-t);color:var(--me)}
+.tag.deadline.late{background:var(--risk-t);color:var(--risk)}
 .tag.done{background:var(--done-t);color:var(--done)}
 .mcmeta{font-size:12.5px;color:var(--ink2)}
 .mcstage{font-size:12.5px;color:var(--ink);display:flex;align-items:center;gap:8px}
@@ -958,6 +1028,14 @@ const CSS = `
 .bflag{font-size:10px;font-weight:700;border-radius:5px;padding:1px 6px}
 .bflag.od{background:var(--member-t);color:var(--member)}
 .bflag.risk{background:var(--risk-t);color:var(--risk)}
+.bdeadline{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:1px;color:var(--me);line-height:1}
+.bdeadline strong{font-size:11px;font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:.15px}
+.bdeadline.soon{color:var(--member)}
+.bdeadline.late{color:var(--risk)}
+.bdeadlinebar{height:3px;margin-top:9px;border-radius:4px;overflow:hidden;background:var(--me-t)}
+.bdeadlinebar i{display:block;height:100%;border-radius:inherit;background:var(--me);transition:width .4s linear}
+.bdeadlinebar.soon{background:var(--member-t)} .bdeadlinebar.soon i{background:var(--member)}
+.bdeadlinebar.late{background:var(--risk-t)} .bdeadlinebar.late i{background:var(--risk)}
 .bempty{font-size:12px;color:var(--ink3);padding:8px 6px;text-align:center}
 
 /* drawer */
@@ -985,6 +1063,8 @@ const CSS = `
 .actinfo{flex:1;display:flex;flex-direction:column;gap:3px}
 .actnow{font-size:14px;font-weight:650;display:flex;align-items:center;gap:6px}
 .actmeta{font-size:11.5px;color:var(--ink2)}
+.deadline-note{font-size:11.5px;font-weight:650;color:var(--me)}
+.deadline-note.late{color:var(--risk)}
 .actbar.done .actnow{color:var(--done)}
 .cta{display:flex;align-items:center;gap:7px;border:none;border-radius:9px;padding:11px 15px;color:#fff;
   font-size:13px;font-weight:650;cursor:pointer;font-family:inherit;transition:.12s;white-space:nowrap}
